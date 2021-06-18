@@ -32,6 +32,18 @@ void deallocate(T *&ptr)
   }
 }
 
+using namespace RAJA;
+template <std::size_t N>
+std::array<idx_t,N> combine_perms(std::array<idx_t, N> perm1, std::array<idx_t, N> perm2) {
+  std::array<idx_t,N> perm;
+
+  for(long unsigned int i = 0; i < N; i++) {
+    perm[i] = perm2[perm1[i]];
+  }
+
+  return perm;
+}
+
 
 
 
@@ -44,7 +56,6 @@ int run_2mm() {
   int nk = 1000;
   int nl = 1000;
 
-  using namespace RAJA;
 
   //creating Views
   std::cout << "Creating Views\n";
@@ -154,10 +165,103 @@ int run_2mm() {
   std::cout << "initing permuted A accesses\n";
   
   print_access_list(std::cout, initAperm_accesses, 1);
+
+  using KPol_2MM_01 =
+        KernelPolicy<
+          statement::For<1, loop_exec,
+            statement::For<0, loop_exec,
+              statement::For<2, loop_exec,
+                statement::Lambda<0>
+              >
+            >
+          >
+        >; 
+
+  
+  auto mm1_01 = make_kernel<KPol_2MM_01>(tuple_mm1, [=](auto i, auto j, auto k) {AB(i,j) += A(i,k) * B(k,j);});
+
+  auto mm1_01_accesses = mm1_01.execute_symbolically();
+
+  std::cout << "first multiply accesses:\n";
+  print_access_list(std::cout, mm1_accesses, 1); 
+  std::cout << "first multiply accesses, outer two loops interchanged\n";
+  print_access_list(std::cout, mm1_01_accesses, 1);
+
+
+  auto layoutPermA = layout_to_perm(A.get_layout());
+  auto layoutPermAperm = layout_to_perm(Aperm.get_layout());
+  std::cout << "A layout perm:\n";
+  std::cout << " " << layoutPermA[0] << " " << layoutPermA[1] << "\n"; 
+ std::cout << "Aperm layout perm:\n";
+  std::cout << " " << layoutPermAperm[0] << " " << layoutPermAperm[1] << "\n"; 
+
+
+  std::cout << "initA permuted accesses:\n";
+  print_permuted_access_list(std::cout, initA_accesses, 1);
+  std::cout << "initAperm permuted accesses:\n";
+  print_permuted_access_list(std::cout, initAperm_accesses, 1);
+
   return 0;
 } //run_2mm
 
+
+int test_combine_perms() {
+
+  std::array<idx_t,3> perm1 {{0,2,1}}; 
+  std::array<idx_t,3> perm2 {{2,1,0}};
+
+  std::array<idx_t,3> combined = combine_perms(perm1, perm2);
+
+  std::cout << "Combining 0,2,1 with 2,1,0\n";
+  for(const auto& s : combined) {
+    std::cout << s << " ";
+  } 
+
+ return 0;
+}
+
+int test_policy_order() {
+
+  auto order = policy_to_argument_order(statement::Lambda<0>{});
+
+  std::cout << "Order for Lambda<0>, length: " << order.size() << "\n";
+
+  auto order2 = policy_to_argument_order(statement::For<1,loop_exec,statement::Lambda<0>>{});
+
+  std::cout << "Order for for lambda: \n";
+  std::cout << order2[0] << "\n";
+
+  using K = KernelPolicy<
+    statement::For<0, loop_exec,
+      statement::For<1, loop_exec,
+        statement::Lambda<0>
+      >
+    >
+  >;
+
+  auto order3 = policy_to_argument_order(K{});
+  std::cout << " Order for 2d loop without interchange\n";
+  std::cout << order3[0] << " " << order3[1] << "\n";
+
+
+  using K2 = KernelPolicy<
+    statement::For<1, loop_exec,
+      statement::For<0, loop_exec,
+        statement::Lambda<0>
+      >
+    >
+  >;
+  auto order4 = policy_to_argument_order(K2{});
+  std::cout << " Order for 2d loop with interchange\n";
+  std::cout << order4[0] << " " << order4[1] << "\n";
+
+  return 0;
+
+}
 int main(int RAJA_UNUSED_ARG(argc), char** RAJA_UNUSED_ARG(argv[]))
 {
   run_2mm();
+
+  //test_combine_perms();
+ // test_policy_order();
 }
